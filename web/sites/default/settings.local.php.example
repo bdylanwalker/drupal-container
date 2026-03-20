@@ -1,0 +1,41 @@
+<?php
+
+/**
+ * @file
+ * Local development overrides — copy to settings.local.php (gitignored).
+ *
+ * DDEV users: you do NOT need this file. `ddev start` auto-generates
+ * settings.ddev.php which handles the database connection and other local
+ * settings automatically.
+ *
+ * Use this file only for non-DDEV local setups or to layer additional
+ * overrides on top of settings.ddev.php.
+ */
+
+// Local database (adjust for your local setup).
+// DDEV default credentials: host=db, db/user/pass all = 'db'
+$databases['default']['default'] = [
+  'database'  => 'db',
+  'username'  => 'db',
+  'password'  => 'db',
+  'host'      => 'db',
+  'port'      => '3306',
+  'prefix'    => '',
+  'driver'    => 'mysql',
+  'namespace' => 'Drupal\\mysql\\Driver\\Database\\mysql',
+  'autoload'  => 'core/modules/mysql/src/Driver/Database/mysql/',
+];
+
+$settings['hash_salt'] = 'local-dev-hash-salt-replace-me';
+
+// Disable trusted host checks for local development.
+$settings['trusted_host_patterns'] = ['.*'];
+
+// Enable verbose error display locally.
+$config['system.logging']['error_level'] = 'verbose';
+
+// Disable performance caching locally.
+$config['system.performance']['css']['preprocess'] = FALSE;
+$config['system.performance']['js']['preprocess'] = FALSE;
+$settings['extension_discovery_scan_tests'] = TRUE;
+$settings['rebuild_access'] = TRUE;

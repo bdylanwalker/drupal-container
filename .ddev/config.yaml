@@ -1,0 +1,11 @@
+name: drupal
+type: drupal11
+docroot: web
+php_version: "8.3"
+webserver_type: nginx-fpm
+# MySQL 8.0 is the closest DDEV-supported version to production's MySQL 8.4.
+# The SQL dialect differences are negligible for Drupal.
+database:
+  type: mysql
+  version: "8.0"
+composer_version: "2"

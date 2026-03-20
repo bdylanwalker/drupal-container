@@ -1,0 +1,50 @@
+# Composer / Drupal contrib
+/vendor/
+/web/core/
+/web/modules/contrib/
+/web/themes/contrib/
+/web/profiles/contrib/
+/drush/Commands/contrib/
+
+# Drupal scaffold files managed by composer (regenerated; do not edit directly)
+/web/autoload.php
+/web/.htaccess
+/web/index.php
+/web/robots.txt
+/web/update.php
+
+# Drupal generated / runtime
+/web/sites/default/files/
+/web/sites/default/settings.local.php
+/web/sites/default/settings.ddev.php
+/web/sites/default/services.local.yml
+/web/sites/php
+
+# Secrets / credentials
+.env
+.env.local
+.env.*.local
+.envrc
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+
+# Build artifacts
+dist/
+node_modules/
+private/
+
+# OS / tools
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.log
+
+# Claude local settings
+.claude/settings.local.json

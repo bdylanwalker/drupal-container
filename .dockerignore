@@ -1,0 +1,32 @@
+.git
+.gitignore
+.dockerignore
+.ddev/
+
+# Drupal contrib installed at build time by composer
+vendor/
+web/core/
+web/modules/contrib/
+web/themes/contrib/
+web/profiles/contrib/
+drush/Commands/contrib/
+
+# Drupal runtime files (mounted from Azure Files in production)
+web/sites/default/files/
+
+# Local dev overrides
+web/sites/default/settings.local.php
+web/sites/default/services.local.yml
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.log
+
+# Azure DevOps pipeline file not needed in image
+azure-pipelines.yml
+
+# Infrastructure code not needed in image
+infra/

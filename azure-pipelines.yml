@@ -1,0 +1,151 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+# ---------------------------------------------------------------------------
+# Variable groups and pipeline variables.
+#
+# Create a variable group named "drupal-prod-secrets" in Azure DevOps
+# (Pipelines → Library) containing:
+#   mysqlAdminPassword  — marked secret
+#   drupalHashSalt      — marked secret
+#
+# Set the pipeline variables below to match your environment.
+# ---------------------------------------------------------------------------
+variables:
+  - group: drupal-prod-secrets
+  - name: azureServiceConnection
+    value: azure-prod                 # Name of your Azure service connection in ADO
+  - name: resourceGroup
+    value: drupal-prod-rg
+  - name: location
+    value: eastus
+  - name: acrName
+    value: drupalacr                  # Must be globally unique across Azure
+
+stages:
+
+  # -------------------------------------------------------------------------
+  # Stage 1: Build the Docker image and push it to ACR.
+  # Uses `az acr build` (ACR Tasks) — no Docker daemon required on the agent.
+  # Two tags are pushed: the pipeline build ID (immutable) and "latest".
+  # -------------------------------------------------------------------------
+  - stage: Build
+    displayName: Build and push image
+    jobs:
+      - job: BuildImage
+        displayName: az acr build
+        steps:
+          - task: AzureCLI@2
+            displayName: Build and push to ACR
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az acr build \
+                  --registry $(acrName) \
+                  --image drupal:$(Build.BuildId) \
+                  --image drupal:latest \
+                  --file docker/Dockerfile \
+                  .
+
+  # -------------------------------------------------------------------------
+  # Stage 2: Deploy infrastructure and application via Bicep.
+  # This is idempotent — re-running will update resources in place.
+  # The new image tag is passed as a parameter so the Container App and the
+  # drush deploy Job both reference the just-built image.
+  # -------------------------------------------------------------------------
+  - stage: DeployInfra
+    displayName: Deploy infrastructure (Bicep)
+    dependsOn: Build
+    jobs:
+      - job: Bicep
+        displayName: az deployment group create
+        steps:
+          - task: AzureCLI@2
+            displayName: Deploy Bicep template
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az deployment group create \
+                  --resource-group $(resourceGroup) \
+                  --template-file infra/main.bicep \
+                  --parameters infra/main.bicepparam \
+                  --parameters \
+                    imageTag=$(Build.BuildId) \
+                    mysqlAdminPassword=$(mysqlAdminPassword) \
+                    drupalHashSalt=$(drupalHashSalt) \
+                  --mode Incremental
+
+  # -------------------------------------------------------------------------
+  # Stage 3: Run `drush deploy` exactly once per pipeline run.
+  # Triggers the Container App Job (defined in Bicep), waits for it to finish,
+  # and fails the pipeline if the job fails.
+  #
+  # drush deploy runs: updatedb → cache:rebuild → config:import
+  # -------------------------------------------------------------------------
+  - stage: DrushDeploy
+    displayName: Run drush deploy
+    dependsOn: DeployInfra
+    jobs:
+      - job: RunDrush
+        displayName: Trigger and wait for drush deploy job
+        timeoutInMinutes: 20
+        steps:
+          - task: AzureCLI@2
+            displayName: drush deploy
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+
+                JOB_NAME="drupal-drush-deploy"
+
+                echo "Starting Container App Job: $JOB_NAME"
+                EXECUTION_NAME=$(az containerapp job start \
+                  --name "$JOB_NAME" \
+                  --resource-group $(resourceGroup) \
+                  --query name \
+                  --output tsv)
+
+                echo "Execution started: $EXECUTION_NAME"
+
+                # Poll until the job reaches a terminal state (max 10 minutes).
+                TIMEOUT=600
+                ELAPSED=0
+                while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+                  STATUS=$(az containerapp job execution show \
+                    --name "$JOB_NAME" \
+                    --resource-group $(resourceGroup) \
+                    --job-execution-name "$EXECUTION_NAME" \
+                    --query "properties.status" \
+                    --output tsv)
+
+                  echo "[${ELAPSED}s] Status: $STATUS"
+
+                  case "$STATUS" in
+                    Succeeded)
+                      echo "drush deploy succeeded."
+                      exit 0
+                      ;;
+                    Failed|Stopped|Degraded)
+                      echo "drush deploy failed with status: $STATUS"
+                      exit 1
+                      ;;
+                  esac
+
+                  sleep 10
+                  ELAPSED=$((ELAPSED + 10))
+                done
+
+                echo "Timed out waiting for drush deploy job after ${TIMEOUT}s."
+                exit 1
