@@ -26,6 +26,7 @@
 .env.*.local
 .envrc
 *.pem
+!docker/mysql-azure.pem
 *.key
 *.p12
 *.pfx

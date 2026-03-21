@@ -74,6 +74,7 @@ RUN mkdir -p web/sites/default/files \
 ENV PATH="/var/www/html/vendor/bin:${PATH}"
 
 # --- Configuration files ---
+COPY docker/mysql-azure.pem /etc/ssl/certs/mysql-azure.pem
 COPY docker/nginx.conf     /etc/nginx/nginx.conf
 COPY docker/default.conf   /etc/nginx/conf.d/default.conf
 COPY docker/php.ini        /usr/local/etc/php/conf.d/99-drupal.ini
