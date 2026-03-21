@@ -3,6 +3,7 @@ param location string
 param environmentId string
 param containerImage string
 param acrName string
+param identityResourceId string
 param mysqlHost string
 param mysqlAdminLogin string
 @secure()
@@ -11,21 +12,16 @@ param mysqlAdminPassword string
 param drupalHashSalt string
 param drupalTrustedHostPatterns string = ''
 
-// Built-in role definition ID for AcrPull.
-var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
-
-resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  name: acrName
-}
-
-// ---------------------------------------------------------------------------
-// Container App — system-assigned managed identity for ACR pull
-// ---------------------------------------------------------------------------
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
+  // User-assigned identity; AcrPull is granted before this resource is deployed
+  // (see acr.bicep), eliminating the RBAC propagation race condition.
   identity: {
-    type: 'SystemAssigned'
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${identityResourceId}': {}
+    }
   }
   properties: {
     environmentId: environmentId
@@ -34,14 +30,12 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         external: true
         targetPort: 80
         transport: 'http'
-        // Allow insecure traffic — ACA ingress handles TLS termination.
         allowInsecure: false
       }
-      // Use the managed identity to pull from ACR (no stored credentials).
       registries: [
         {
           server: '${acrName}.azurecr.io'
-          identity: 'system'
+          identity: identityResourceId
         }
       ]
       secrets: [
@@ -93,18 +87,6 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
     }
-  }
-}
-
-// Grant the Container App's managed identity the AcrPull role on the registry.
-// Note: RBAC propagation can take 1-2 minutes; the first pull may retry briefly.
-resource acrPullAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(acr.id, containerApp.id, acrPullRoleId)
-  scope: acr
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleId)
-    principalId: containerApp.identity.principalId
-    principalType: 'ServicePrincipal'
   }
 }
 

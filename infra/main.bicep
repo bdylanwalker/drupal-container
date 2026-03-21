@@ -27,6 +27,19 @@ param drupalHashSalt string
 param drupalTrustedHostPatterns string = ''
 
 // ---------------------------------------------------------------------------
+// Shared user-assigned managed identity for ACR pulls.
+//
+// Using a user-assigned identity (rather than system-assigned) solves the
+// RBAC propagation race: we create the identity, assign AcrPull on the ACR,
+// and only then deploy the Container App and Job — so the permission is
+// already in place when ACA first tries to pull the image.
+// ---------------------------------------------------------------------------
+resource containerAppsIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${appName}-aca-identity'
+  location: location
+}
+
+// ---------------------------------------------------------------------------
 // Modules
 // ---------------------------------------------------------------------------
 
@@ -38,11 +51,15 @@ module network 'modules/network.bicep' = {
   }
 }
 
+// ACR is deployed with the AcrPull role assignment for the identity above.
+// aca-app and aca-job both dependsOn this module so the role is guaranteed
+// to exist before either resource tries to pull an image.
 module acr 'modules/acr.bicep' = {
   name: 'acr'
   params: {
     acrName: acrName
     location: location
+    containerAppsIdentityPrincipalId: containerAppsIdentity.properties.principalId
   }
 }
 
@@ -90,12 +107,14 @@ module acaApp 'modules/aca-app.bicep' = {
     environmentId: acaEnv.outputs.environmentId
     containerImage: containerImage
     acrName: acrName
+    identityResourceId: containerAppsIdentity.id
     mysqlHost: mysql.outputs.fqdn
     mysqlAdminLogin: mysqlAdminLogin
     mysqlAdminPassword: mysqlAdminPassword
     drupalHashSalt: drupalHashSalt
     drupalTrustedHostPatterns: drupalTrustedHostPatterns
   }
+  dependsOn: [acr]
 }
 
 module acaJob 'modules/aca-job.bicep' = {
@@ -106,11 +125,13 @@ module acaJob 'modules/aca-job.bicep' = {
     environmentId: acaEnv.outputs.environmentId
     containerImage: containerImage
     acrName: acrName
+    identityResourceId: containerAppsIdentity.id
     mysqlHost: mysql.outputs.fqdn
     mysqlAdminLogin: mysqlAdminLogin
     mysqlAdminPassword: mysqlAdminPassword
     drupalHashSalt: drupalHashSalt
   }
+  dependsOn: [acr]
 }
 
 // ---------------------------------------------------------------------------
