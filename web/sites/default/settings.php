@@ -50,8 +50,13 @@ $databases['default']['default'] = [
   'isolation_level' => 'READ COMMITTED',
   // Azure MySQL 8.4 enforces require_secure_transport=ON.
   // Certificate downloaded from Azure Portal → MySQL Flexible Server → Networking.
+  // MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false is required for mysqlnd (PHP's
+  // native MySQL driver) to actually initiate SSL mode; without it, mysqlnd may
+  // silently skip SSL and connect plaintext, which MySQL then rejects with 3159.
+  // The connection is within Azure VNet so MITM risk is negligible.
   'pdo' => [
-    \PDO::MYSQL_ATTR_SSL_CA => '/etc/ssl/certs/mysql-azure.pem',
+    \PDO::MYSQL_ATTR_SSL_CA                => '/etc/ssl/certs/mysql-azure.pem',
+    \PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false,
   ],
 ];
 
