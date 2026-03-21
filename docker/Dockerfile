@@ -37,7 +37,7 @@ RUN docker-php-ext-configure gd \
 # $PHPIZE_DEPS provides the build toolchain; it is removed after to keep the image lean.
 # XDebug is disabled by default (xdebug.mode=off in xdebug.ini).
 # Enable at runtime by setting XDEBUG_MODE=develop,debug in the container environment.
-RUN apk add --no-cache --virtual .phpize-deps $PHPIZE_DEPS \
+RUN apk add --no-cache --virtual .phpize-deps $PHPIZE_DEPS linux-headers \
     && pecl install xdebug \
     && docker-php-ext-enable xdebug \
     && apk del --no-network .phpize-deps
