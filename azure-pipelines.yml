@@ -69,19 +69,25 @@ stages:
         steps:
           - task: AzureCLI@2
             displayName: Deploy Bicep template
+            # Secrets are passed via env: so they are never substituted into
+            # the script text, avoiding shell interpretation of special characters.
+            env:
+              MYSQL_ADMIN_PASSWORD: $(mysqlAdminPassword)
+              DRUPAL_HASH_SALT: $(drupalHashSalt)
             inputs:
               azureSubscription: $(azureServiceConnection)
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
+                set -euo pipefail
                 az deployment group create \
                   --resource-group $(resourceGroup) \
                   --template-file infra/main.bicep \
-                  --parameters infra/main.bicepparam \
+                  --parameters infra/main.parameters.json \
                   --parameters \
-                    imageTag=$(Build.BuildId) \
-                    mysqlAdminPassword=$(mysqlAdminPassword) \
-                    drupalHashSalt=$(drupalHashSalt) \
+                    imageTag='$(Build.BuildId)' \
+                    mysqlAdminPassword="$MYSQL_ADMIN_PASSWORD" \
+                    drupalHashSalt="$DRUPAL_HASH_SALT" \
                   --mode Incremental
 
   # -------------------------------------------------------------------------
