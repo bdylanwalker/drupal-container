@@ -5,6 +5,7 @@ RUN apk add --no-cache \
     nginx \
     supervisor \
     mysql-client \
+    ca-certificates \
     git \
     zip \
     unzip \
