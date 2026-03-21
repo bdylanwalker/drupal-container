@@ -51,7 +51,9 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     }
     template: {
       scale: {
-        minReplicas: 1
+        // 0 allows the deployment to succeed without requiring a running replica.
+        // Increment to 1 once the container is confirmed to start correctly.
+        minReplicas: 0
         maxReplicas: 3
       }
       volumes: [
