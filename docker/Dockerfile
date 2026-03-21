@@ -68,7 +68,8 @@ RUN composer run-script post-install-cmd --no-interaction 2>/dev/null || true
 # Ensure the files mount point exists with correct ownership.
 # In production this path is overlaid by the Azure Files volume mount.
 RUN mkdir -p web/sites/default/files \
-    && chown -R www-data:www-data web/sites/default
+    && chown -R www-data:www-data web/sites/default \
+    && chmod 444 web/sites/default/settings.php
 
 # Add vendor/bin to PATH so drush is available by name
 ENV PATH="/var/www/html/vendor/bin:${PATH}"
