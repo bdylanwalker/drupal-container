@@ -48,16 +48,6 @@ $databases['default']['default'] = [
   'namespace' => 'Drupal\\mysql\\Driver\\Database\\mysql',
   'autoload'  => 'core/modules/mysql/src/Driver/Database/mysql/',
   'isolation_level' => 'READ COMMITTED',
-  // Azure MySQL 8.4 enforces require_secure_transport=ON.
-  // Certificate downloaded from Azure Portal → MySQL Flexible Server → Networking.
-  // MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false is required for mysqlnd (PHP's
-  // native MySQL driver) to actually initiate SSL mode; without it, mysqlnd may
-  // silently skip SSL and connect plaintext, which MySQL then rejects with 3159.
-  // The connection is within Azure VNet so MITM risk is negligible.
-  'pdo' => [
-    \PDO::MYSQL_ATTR_SSL_CA                => '/etc/ssl/certs/mysql-azure.pem',
-    \PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false,
-  ],
 ];
 
 // ---------------------------------------------------------------------------
@@ -121,4 +111,11 @@ if (getenv('IS_DDEV_PROJECT') === 'true'
 // for non-DDEV local overrides.
 if (file_exists($app_root . '/' . $site_path . '/settings.local.php')) {
   include $app_root . '/' . $site_path . '/settings.local.php';
+}
+
+// Azure SSL overrides — baked into the Docker image at this path.
+// Loaded last so it re-applies PDO SSL options even if the Drupal installer
+// rewrote $databases above without them.
+if (file_exists($app_root . '/' . $site_path . '/settings.azure.php')) {
+  include $app_root . '/' . $site_path . '/settings.azure.php';
 }

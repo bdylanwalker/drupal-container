@@ -68,14 +68,14 @@ RUN composer run-script post-install-cmd --no-interaction 2>/dev/null || true
 # Ensure the files mount point exists with correct ownership.
 # In production this path is overlaid by the Azure Files volume mount.
 RUN mkdir -p web/sites/default/files \
-    && chown -R www-data:www-data web/sites/default \
-    && chmod 444 web/sites/default/settings.php
+    && chown -R www-data:www-data web/sites/default
 
 # Add vendor/bin to PATH so drush is available by name
 ENV PATH="/var/www/html/vendor/bin:${PATH}"
 
 # --- Configuration files ---
 COPY docker/mysql-azure.pem /etc/ssl/certs/mysql-azure.pem
+COPY docker/settings.azure.php web/sites/default/settings.azure.php
 COPY docker/nginx.conf     /etc/nginx/nginx.conf
 COPY docker/default.conf   /etc/nginx/conf.d/default.conf
 COPY docker/php.ini        /usr/local/etc/php/conf.d/99-drupal.ini
