@@ -4,7 +4,7 @@ FROM php:8.3-fpm-bookworm AS base
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     supervisor \
-    mysql-client \
+    default-mysql-client \
     ca-certificates \
     git \
     zip \
@@ -36,15 +36,12 @@ RUN docker-php-ext-configure gd \
         bcmath
 
 # Install XDebug via PECL.
-# $PHPIZE_DEPS provides the build toolchain; it is removed after to keep the image lean.
+# Debian PHP images ship with $PHPIZE_DEPS (build tools) pre-installed,
+# so no separate install/purge step is needed.
 # XDebug is disabled by default (xdebug.mode=off in xdebug.ini).
 # Enable at runtime by setting XDEBUG_MODE=develop,debug in the container environment.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    $PHPIZE_DEPS \
-    linux-headers-amd64 \
-    && pecl install xdebug \
-    && docker-php-ext-enable xdebug \
-    && rm -rf /var/lib/apt/lists/*
+RUN pecl install xdebug \
+    && docker-php-ext-enable xdebug
 
 # Install Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer

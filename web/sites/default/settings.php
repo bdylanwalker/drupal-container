@@ -48,15 +48,6 @@ $databases['default']['default'] = [
   'namespace' => 'Drupal\\mysql\\Driver\\Database\\mysql',
   'autoload'  => 'core/modules/mysql/src/Driver/Database/mysql/',
   'isolation_level' => 'READ COMMITTED',
-  // Azure MySQL 8.4 enforces require_secure_transport=ON.
-  // MYSQL_ATTR_SSL_VERIFY_SERVER_CERT must be set (true or false) for mysqlnd
-  // to actually initiate SSL; setting only MYSQL_ATTR_SSL_CA is insufficient.
-  // settings.azure.php (baked into the image) re-applies these options after
-  // the Drupal installer rewrites this file and strips the pdo key.
-  'pdo' => [
-    \PDO::MYSQL_ATTR_SSL_CA                => '/etc/ssl/certs/mysql-azure.pem',
-    \PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => FALSE,
-  ],
 ];
 
 // ---------------------------------------------------------------------------
