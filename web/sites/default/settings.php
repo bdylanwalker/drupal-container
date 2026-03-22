@@ -48,6 +48,10 @@ $databases['default']['default'] = [
   'namespace' => 'Drupal\\mysql\\Driver\\Database\\mysql',
   'autoload'  => 'core/modules/mysql/src/Driver/Database/mysql/',
   'isolation_level' => 'READ COMMITTED',
+  'pdo' => [
+    \PDO::MYSQL_ATTR_SSL_CA                => '/etc/ssl/certs/mysql-azure.pem',
+    \PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => FALSE,
+  ],
 ];
 
 // ---------------------------------------------------------------------------
