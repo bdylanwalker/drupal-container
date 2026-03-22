@@ -1,7 +1,7 @@
-FROM php:8.3-fpm-alpine AS base
+FROM php:8.3-fpm-bookworm AS base
 
 # Install system dependencies and nginx
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     supervisor \
     mysql-client \
@@ -11,13 +11,14 @@ RUN apk add --no-cache \
     unzip \
     patch \
     libpng-dev \
-    libjpeg-turbo-dev \
+    libjpeg62-turbo-dev \
     libwebp-dev \
-    freetype-dev \
+    libfreetype6-dev \
     libxml2-dev \
-    icu-dev \
-    oniguruma-dev \
-    libzip-dev
+    libicu-dev \
+    libonig-dev \
+    libzip-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Configure and install required PHP extensions for Drupal
 RUN docker-php-ext-configure gd \
@@ -38,10 +39,12 @@ RUN docker-php-ext-configure gd \
 # $PHPIZE_DEPS provides the build toolchain; it is removed after to keep the image lean.
 # XDebug is disabled by default (xdebug.mode=off in xdebug.ini).
 # Enable at runtime by setting XDEBUG_MODE=develop,debug in the container environment.
-RUN apk add --no-cache --virtual .phpize-deps $PHPIZE_DEPS linux-headers \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    $PHPIZE_DEPS \
+    linux-headers-amd64 \
     && pecl install xdebug \
     && docker-php-ext-enable xdebug \
-    && apk del --no-network .phpize-deps
+    && rm -rf /var/lib/apt/lists/*
 
 # Install Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
@@ -75,7 +78,7 @@ ENV PATH="/var/www/html/vendor/bin:${PATH}"
 
 # --- Configuration files ---
 COPY docker/mysql-azure.pem /etc/ssl/certs/mysql-azure.pem
-COPY docker/settings.azure.php web/sites/default/settings.azure.php
+COPY --chown=www-data:www-data docker/settings.azure.php web/sites/default/settings.azure.php
 COPY docker/nginx.conf     /etc/nginx/nginx.conf
 COPY docker/default.conf   /etc/nginx/conf.d/default.conf
 COPY docker/php.ini        /usr/local/etc/php/conf.d/99-drupal.ini
