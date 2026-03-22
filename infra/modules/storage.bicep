@@ -22,6 +22,12 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     supportsHttpsTrafficOnly: true
     minimumTlsVersion: 'TLS1_2'
     allowBlobPublicAccess: false
+    // Explicitly allow all network access — previously this was Deny with a
+    // private endpoint. ARM preserves existing networkAcls if omitted, so we
+    // must set Allow explicitly to avoid mount errors after the PE was removed.
+    networkAcls: {
+      defaultAction: 'Allow'
+    }
   }
 }
 
