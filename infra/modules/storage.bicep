@@ -17,11 +17,14 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageAccountName
   location: location
   sku: {
-    name: 'Standard_LRS'
+    name: 'Premium_LRS'
   }
-  kind: 'StorageV2'
+  kind: 'FileStorage'
   properties: {
-    supportsHttpsTrafficOnly: true
+    // NFS protocol does not use HTTPS; supportsHttpsTrafficOnly must be false
+    // for NFS mounts to succeed. This applies to the NFS data path only —
+    // management plane traffic still uses HTTPS.
+    supportsHttpsTrafficOnly: false
     minimumTlsVersion: 'TLS1_2'
     allowBlobPublicAccess: false
     // Deny all public network access; reachable only via private endpoint.
@@ -43,7 +46,7 @@ resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-0
   name: fileShareName
   properties: {
     shareQuota: 100
-    enabledProtocols: 'SMB'
+    enabledProtocols: 'NFS'
   }
 }
 
