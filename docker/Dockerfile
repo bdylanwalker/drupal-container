@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpng-dev \
     libjpeg62-turbo-dev \
     libwebp-dev \
+    libavif-dev \
     libfreetype6-dev \
     libxml2-dev \
     libicu-dev \
@@ -25,6 +26,7 @@ RUN docker-php-ext-configure gd \
         --with-freetype \
         --with-jpeg \
         --with-webp \
+        --with-avif \
     && docker-php-ext-install -j$(nproc) \
         pdo_mysql \
         gd \
@@ -40,6 +42,9 @@ RUN docker-php-ext-configure gd \
 # so no separate install/purge step is needed.
 # XDebug is disabled by default (xdebug.mode=off in xdebug.ini).
 # Enable at runtime by setting XDEBUG_MODE=develop,debug in the container environment.
+RUN pecl install apcu \
+    && docker-php-ext-enable apcu
+
 RUN pecl install xdebug \
     && docker-php-ext-enable xdebug
 
