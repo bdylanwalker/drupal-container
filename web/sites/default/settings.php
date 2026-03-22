@@ -80,6 +80,13 @@ $settings['file_public_path'] = 'sites/default/files';
 // Temporary file storage inside the container (ephemeral, not persisted).
 $settings['file_temp_path'] = '/tmp';
 
+// Store compiled Twig templates on the container's local filesystem.
+// Azure Files SMB does not support chmod(), causing PHP warnings when Drupal
+// tries to set permissions on the twig cache directory. Moving to /tmp keeps
+// the cache local (ephemeral per-replica) and avoids the warnings entirely.
+$settings['php_storage']['twig']['directory'] = '/tmp';
+$settings['php_storage']['default']['directory'] = '/tmp';
+
 // Config sync directory — maps to the config/sync/ directory at project root.
 $settings['config_sync_directory'] = dirname($app_root) . '/config/sync';
 

@@ -51,9 +51,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     }
     template: {
       scale: {
-        // 0 allows the deployment to succeed without requiring a running replica.
-        // Increment to 1 once the container is confirmed to start correctly.
-        minReplicas: 0
+        minReplicas: 1
         maxReplicas: 3
       }
       volumes: [
@@ -84,6 +82,21 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               volumeName: 'drupal-files'
               mountPath: '/var/www/html/web/sites/default/files'
+            }
+          ]
+          probes: [
+            {
+              // Readiness probe doubles as an opcache prewarm: each HTTP GET
+              // causes PHP-FPM to compile and cache the Drupal bootstrap path
+              // before the replica is admitted to the load balancer.
+              type: 'Readiness'
+              httpGet: {
+                path: '/'
+                port: 80
+              }
+              initialDelaySeconds: 10
+              periodSeconds: 5
+              failureThreshold: 3
             }
           ]
         }
