@@ -3,35 +3,15 @@ param location string
 param administratorLogin string
 @secure()
 param administratorPassword string
-param delegatedSubnetId string
-param vnetId string
+
+@description('IPv4 addresses allowed through the MySQL firewall (one rule per IP).')
+param developerIps array = []
 
 // Server name must be globally unique across Azure.
 var serverName = '${appName}-mysql-${uniqueString(resourceGroup().id)}'
 
 // ---------------------------------------------------------------------------
-// Private DNS zone for MySQL Flexible Server.
-// The zone name must follow the pattern: <server-name>.private.mysql.database.azure.com
-// ---------------------------------------------------------------------------
-resource privateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
-  name: '${serverName}.private.mysql.database.azure.com'
-  location: 'global'
-}
-
-resource dnsZoneVnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
-  parent: privateDnsZone
-  name: '${appName}-mysql-vnet-link'
-  location: 'global'
-  properties: {
-    virtualNetwork: {
-      id: vnetId
-    }
-    registrationEnabled: false
-  }
-}
-
-// ---------------------------------------------------------------------------
-// MySQL 8.4 Flexible Server — VNet-integrated, no public access
+// MySQL 8.4 Flexible Server — public endpoint, firewall-restricted
 // ---------------------------------------------------------------------------
 resource mysqlServer 'Microsoft.DBforMySQL/flexibleServers@2023-12-30' = {
   name: serverName
@@ -59,11 +39,9 @@ resource mysqlServer 'Microsoft.DBforMySQL/flexibleServers@2023-12-30' = {
       mode: 'Disabled'
     }
     network: {
-      delegatedSubnetResourceId: delegatedSubnetId
-      privateDnsZoneResourceId: privateDnsZone.id
+      publicNetworkAccess: 'Enabled'
     }
   }
-  dependsOn: [dnsZoneVnetLink]
 }
 
 resource drupalDatabase 'Microsoft.DBforMySQL/flexibleServers/databases@2023-12-30' = {
@@ -74,6 +52,31 @@ resource drupalDatabase 'Microsoft.DBforMySQL/flexibleServers/databases@2023-12-
     collation: 'utf8mb4_unicode_ci'
   }
 }
+
+// ---------------------------------------------------------------------------
+// Firewall rules
+// ---------------------------------------------------------------------------
+
+// Azure convention: start/end both 0.0.0.0 means "allow all Azure services".
+// This allows ACA (which uses Azure's shared outbound IPs) to reach MySQL.
+resource allowAzureServices 'Microsoft.DBforMySQL/flexibleServers/firewallRules@2023-12-30' = {
+  parent: mysqlServer
+  name: 'allow-azure-services'
+  properties: {
+    startIpAddress: '0.0.0.0'
+    endIpAddress: '0.0.0.0'
+  }
+}
+
+// One rule per developer IP passed in via the developerIps parameter.
+resource developerFirewallRules 'Microsoft.DBforMySQL/flexibleServers/firewallRules@2023-12-30' = [for (ip, i) in developerIps: {
+  parent: mysqlServer
+  name: 'developer-${i}'
+  properties: {
+    startIpAddress: ip
+    endIpAddress: ip
+  }
+}]
 
 output fqdn string = mysqlServer.properties.fullyQualifiedDomainName
 output serverName string = mysqlServer.name

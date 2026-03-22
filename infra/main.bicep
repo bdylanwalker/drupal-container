@@ -26,6 +26,9 @@ param drupalHashSalt string
 @description('Comma-separated trusted_host_patterns regex strings. Set to your Container App FQDN after first deploy.')
 param drupalTrustedHostPatterns string = ''
 
+@description('Developer IPv4 addresses allowed to connect to MySQL directly (one firewall rule per IP).')
+param developerIps array = []
+
 // ---------------------------------------------------------------------------
 // Shared user-assigned managed identity for ACR pulls.
 //
@@ -42,14 +45,6 @@ resource containerAppsIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities
 // ---------------------------------------------------------------------------
 // Modules
 // ---------------------------------------------------------------------------
-
-module network 'modules/network.bicep' = {
-  name: 'network'
-  params: {
-    appName: appName
-    location: location
-  }
-}
 
 // ACR is deployed with the AcrPull role assignment for the identity above.
 // aca-app and aca-job both dependsOn this module so the role is guaranteed
@@ -68,8 +63,6 @@ module storage 'modules/storage.bicep' = {
   params: {
     appName: appName
     location: location
-    vnetId: network.outputs.vnetId
-    privateEndpointSubnetId: network.outputs.privateEndpointSubnetId
   }
 }
 
@@ -80,8 +73,7 @@ module mysql 'modules/mysql.bicep' = {
     location: location
     administratorLogin: mysqlAdminLogin
     administratorPassword: mysqlAdminPassword
-    delegatedSubnetId: network.outputs.mysqlSubnetId
-    vnetId: network.outputs.vnetId
+    developerIps: developerIps
   }
 }
 
@@ -90,7 +82,6 @@ module acaEnv 'modules/aca-environment.bicep' = {
   params: {
     appName: appName
     location: location
-    acaSubnetId: network.outputs.acaSubnetId
     storageAccountName: storage.outputs.storageAccountName
     storageAccountKey: storage.outputs.storageAccountKey
     fileShareName: storage.outputs.fileShareName

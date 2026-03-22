@@ -1,6 +1,5 @@
 param appName string
 param location string
-param acaSubnetId string
 param storageAccountName string
 @secure()
 param storageAccountKey string
@@ -13,12 +12,6 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: '${appName}-env'
   location: location
   properties: {
-    vnetConfiguration: {
-      // internal: false — the environment gets a public IP for ingress.
-      // Set to true if you put a WAF/App Gateway in front.
-      internal: false
-      infrastructureSubnetId: acaSubnetId
-    }
     zoneRedundant: false
   }
 }
