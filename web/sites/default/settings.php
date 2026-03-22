@@ -96,8 +96,13 @@ $settings['config_sync_directory'] = dirname($app_root) . '/config/sync';
 $settings['extension_discovery_scan_tests'] = FALSE;
 $settings['rebuild_access'] = FALSE;
 
-$config['system.performance']['css']['preprocess'] = TRUE;
-$config['system.performance']['js']['preprocess'] = TRUE;
+// CSS/JS aggregation requires chmod() on the public files directory.
+// Azure Files SMB does not support chmod(), causing FileSystem::prepareDirectory()
+// to return FALSE and preventing aggregated files from being written.
+// TODO: re-enable once a custom module overrides file.system to suppress
+// chmod failures on paths that are already accessible.
+$config['system.performance']['css']['preprocess'] = FALSE;
+$config['system.performance']['js']['preprocess'] = FALSE;
 
 // ---------------------------------------------------------------------------
 // Reverse proxy (Azure Container Apps load balancer)
