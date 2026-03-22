@@ -86,12 +86,13 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           ]
           probes: [
             {
-              // Readiness probe doubles as an opcache prewarm: each HTTP GET
-              // causes PHP-FPM to compile and cache the Drupal bootstrap path
-              // before the replica is admitted to the load balancer.
+              // Readiness probe hits the nginx-only /healthz endpoint.
+              // Using / would fail: Drupal returns 400 for requests whose
+              // Host header doesn't match trusted_host_patterns, which is
+              // always the case for internal probe traffic.
               type: 'Readiness'
               httpGet: {
-                path: '/'
+                path: '/healthz'
                 port: 80
               }
               initialDelaySeconds: 10
