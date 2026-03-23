@@ -41,6 +41,24 @@ stages:
         displayName: az acr build
         steps:
           - task: AzureCLI@2
+            displayName: Ensure ACR exists
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az acr show \
+                  --name $(acrName) \
+                  --resource-group $(resourceGroup) \
+                  --output none 2>/dev/null || \
+                az acr create \
+                  --name $(acrName) \
+                  --resource-group $(resourceGroup) \
+                  --location $(location) \
+                  --sku Basic \
+                  --admin-enabled false
+
+          - task: AzureCLI@2
             displayName: Build and push to ACR
             inputs:
               azureSubscription: $(azureServiceConnection)
