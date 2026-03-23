@@ -1,0 +1,11 @@
+prod:
+  uri: https://drupal.wittydune-c12982cb.centralus.azurecontainerapps.io
+  db:
+    default:
+      default:
+        driver: mysql
+        host: ${env.PROD_DB_HOST}
+        database: drupal
+        username: mysqladmin
+        password: ${env.PROD_DB_PASSWORD}
+        port: 3306
