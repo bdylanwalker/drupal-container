@@ -10,6 +10,7 @@ param mysqlAdminLogin string
 param mysqlAdminPassword string
 @secure()
 param drupalHashSalt string
+param databaseName string = 'drupal'
 
 // The job name is also hardcoded in azure-pipelines.yml — keep them in sync.
 var jobName = '${appName}-drush-deploy'
@@ -69,7 +70,7 @@ resource drushJob 'Microsoft.App/jobs@2024-03-01' = {
           }
           env: [
             { name: 'DB_HOST',     value: mysqlHost }
-            { name: 'DB_NAME',     value: 'drupal' }
+            { name: 'DB_NAME',     value: databaseName }
             { name: 'DB_USER',     value: mysqlAdminLogin }
             { name: 'DB_PASSWORD', secretRef: 'db-password' }
             { name: 'DRUPAL_HASH_SALT', secretRef: 'drupal-hash-salt' }

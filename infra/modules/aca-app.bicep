@@ -11,6 +11,9 @@ param mysqlAdminPassword string
 @secure()
 param drupalHashSalt string
 param drupalTrustedHostPatterns string = ''
+param databaseName string = 'drupal'
+param revisionSuffix string
+param activeRevisionName string = ''
 
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
@@ -26,11 +29,23 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   properties: {
     environmentId: environmentId
     configuration: {
+      activeRevisionsMode: 'Multiple'
       ingress: {
         external: true
         targetPort: 80
         transport: 'http'
         allowInsecure: false
+        traffic: empty(activeRevisionName) ? [
+          {
+            latestRevision: true
+            weight: 100
+          }
+        ] : [
+          {
+            revisionName: activeRevisionName
+            weight: 100
+          }
+        ]
       }
       registries: [
         {
@@ -50,6 +65,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       ]
     }
     template: {
+      revisionSuffix: take(revisionSuffix, 10)
       scale: {
         minReplicas: 1
         maxReplicas: 3
@@ -71,7 +87,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           }
           env: [
             { name: 'DB_HOST',     value: mysqlHost }
-            { name: 'DB_NAME',     value: 'drupal' }
+            { name: 'DB_NAME',     value: databaseName }
             { name: 'DB_USER',     value: mysqlAdminLogin }
             { name: 'DB_PASSWORD', secretRef: 'db-password' }
             { name: 'DRUPAL_HASH_SALT', secretRef: 'drupal-hash-salt' }

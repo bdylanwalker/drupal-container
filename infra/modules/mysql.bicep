@@ -7,6 +7,8 @@ param administratorPassword string
 @description('IPv4 addresses allowed through the MySQL firewall (one rule per IP).')
 param developerIps array = []
 
+param databaseName string = 'drupal'
+
 // Server name must be globally unique across Azure.
 var serverName = '${appName}-mysql-${uniqueString(resourceGroup().id)}'
 
@@ -46,7 +48,7 @@ resource mysqlServer 'Microsoft.DBforMySQL/flexibleServers@2023-12-30' = {
 
 resource drupalDatabase 'Microsoft.DBforMySQL/flexibleServers/databases@2023-12-30' = {
   parent: mysqlServer
-  name: 'drupal'
+  name: databaseName
   properties: {
     charset: 'utf8mb4'
     collation: 'utf8mb4_unicode_ci'
@@ -80,3 +82,4 @@ resource developerFirewallRules 'Microsoft.DBforMySQL/flexibleServers/firewallRu
 
 output fqdn string = mysqlServer.properties.fullyQualifiedDomainName
 output serverName string = mysqlServer.name
+output databaseName string = drupalDatabase.name

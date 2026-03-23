@@ -29,6 +29,24 @@ param drupalTrustedHostPatterns string = ''
 @description('Developer IPv4 addresses allowed to connect to MySQL directly (one firewall rule per IP).')
 param developerIps array = []
 
+@description('Whether to deploy a new MySQL server (false for staging, which shares the prod server).')
+param deployMysql bool = true
+
+@description('MySQL host override when deployMysql is false.')
+param mysqlHostOverride string = ''
+
+@description('Database name.')
+param databaseName string = 'drupal'
+
+@description('Whether to deploy ACR and its role assignment (false for staging).')
+param deployAcr bool = true
+
+@description('Revision suffix for the Container App (use Build.BuildId from the pipeline).')
+param revisionSuffix string = 'initial'
+
+@description('Keep traffic on this revision while new one starts (blue/green). Empty = route to latest.')
+param activeRevisionName string = ''
+
 // ---------------------------------------------------------------------------
 // Shared user-assigned managed identity for ACR pulls.
 //
@@ -49,7 +67,7 @@ resource containerAppsIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities
 // ACR is deployed with the AcrPull role assignment for the identity above.
 // aca-app and aca-job both dependsOn this module so the role is guaranteed
 // to exist before either resource tries to pull an image.
-module acr 'modules/acr.bicep' = {
+module acr 'modules/acr.bicep' = if (deployAcr) {
   name: 'acr'
   params: {
     acrName: acrName
@@ -66,7 +84,7 @@ module storage 'modules/storage.bicep' = {
   }
 }
 
-module mysql 'modules/mysql.bicep' = {
+module mysql 'modules/mysql.bicep' = if (deployMysql) {
   name: 'mysql'
   params: {
     appName: appName
@@ -74,8 +92,11 @@ module mysql 'modules/mysql.bicep' = {
     administratorLogin: mysqlAdminLogin
     administratorPassword: mysqlAdminPassword
     developerIps: developerIps
+    databaseName: databaseName
   }
 }
+
+var mysqlHost = deployMysql ? mysql.outputs.fqdn : mysqlHostOverride
 
 module acaEnv 'modules/aca-environment.bicep' = {
   name: 'aca-environment'
@@ -99,11 +120,14 @@ module acaApp 'modules/aca-app.bicep' = {
     containerImage: containerImage
     acrName: acrName
     identityResourceId: containerAppsIdentity.id
-    mysqlHost: mysql.outputs.fqdn
+    mysqlHost: mysqlHost
     mysqlAdminLogin: mysqlAdminLogin
     mysqlAdminPassword: mysqlAdminPassword
     drupalHashSalt: drupalHashSalt
     drupalTrustedHostPatterns: drupalTrustedHostPatterns
+    databaseName: databaseName
+    revisionSuffix: revisionSuffix
+    activeRevisionName: activeRevisionName
   }
   dependsOn: [acr]
 }
@@ -117,10 +141,11 @@ module acaJob 'modules/aca-job.bicep' = {
     containerImage: containerImage
     acrName: acrName
     identityResourceId: containerAppsIdentity.id
-    mysqlHost: mysql.outputs.fqdn
+    mysqlHost: mysqlHost
     mysqlAdminLogin: mysqlAdminLogin
     mysqlAdminPassword: mysqlAdminPassword
     drupalHashSalt: drupalHashSalt
+    databaseName: databaseName
   }
   dependsOn: [acr]
 }

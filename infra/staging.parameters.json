@@ -1,0 +1,30 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "appName": {
+            "value": "drupal-staging"
+        },
+        "acrName": {
+            "value": "drupalacr"
+        },
+        "deployMysql": {
+            "value": false
+        },
+        "deployAcr": {
+            "value": false
+        },
+        "databaseName": {
+            "value": "drupal_staging"
+        },
+        "mysqlAdminLogin": {
+            "value": "mysqladmin"
+        },
+        "drupalTrustedHostPatterns": {
+            "value": ""
+        },
+        "developerIps": {
+            "value": ["108.253.241.223"]
+        }
+    }
+}

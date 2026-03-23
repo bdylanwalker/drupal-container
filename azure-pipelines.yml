@@ -9,30 +9,30 @@ pool:
 # ---------------------------------------------------------------------------
 # Variable groups and pipeline variables.
 #
-# Create a variable group named "drupal-prod-secrets" in Azure DevOps
-# (Pipelines → Library) containing:
+# Variable group "drupal-prod-secrets" (Pipelines → Library) must contain:
 #   mysqlAdminPassword  — marked secret
 #   drupalHashSalt      — marked secret
 #
-# Set the pipeline variables below to match your environment.
+# ADO Environment "drupal-prod" must be created (Pipelines → Environments)
+# and configured with an approval check to gate production deployments.
 # ---------------------------------------------------------------------------
 variables:
   - group: drupal-prod-secrets
   - name: azureServiceConnection
-    value: azure-prod                 # Name of your Azure service connection in ADO
+    value: azure-prod
   - name: resourceGroup
     value: drupal-prod-rg
+  - name: stagingResourceGroup
+    value: drupal-staging-rg
   - name: location
     value: centralus
   - name: acrName
-    value: drupalacr                  # Must be globally unique across Azure
+    value: drupalacr
 
 stages:
 
   # -------------------------------------------------------------------------
   # Stage 1: Build the Docker image and push it to ACR.
-  # Uses `az acr build` (ACR Tasks) — no Docker daemon required on the agent.
-  # Two tags are pushed: the pipeline build ID (immutable) and "latest".
   # -------------------------------------------------------------------------
   - stage: Build
     displayName: Build and push image
@@ -73,22 +73,67 @@ stages:
                   .
 
   # -------------------------------------------------------------------------
-  # Stage 2: Deploy infrastructure and application via Bicep.
-  # This is idempotent — re-running will update resources in place.
-  # The new image tag is passed as a parameter so the Container App and the
-  # drush deploy Job both reference the just-built image.
+  # Stage 2: Deploy staging environment.
+  #
+  # Staging shares the prod MySQL server but uses a separate database
+  # (drupal_staging), separate ACA environment, and separate storage.
+  # The staging DB is seeded from prod on every pipeline run.
   # -------------------------------------------------------------------------
-  - stage: DeployInfra
-    displayName: Deploy infrastructure (Bicep)
+  - stage: DeployStaging
+    displayName: Deploy staging
     dependsOn: Build
     jobs:
-      - job: Bicep
-        displayName: az deployment group create
+      - job: Staging
+        displayName: Deploy, seed, and validate staging
+        timeoutInMinutes: 40
         steps:
           - task: AzureCLI@2
-            displayName: Deploy Bicep template
-            # Secrets are passed via env: so they are never substituted into
-            # the script text, avoiding shell interpretation of special characters.
+            displayName: Ensure staging resource group exists
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az group create \
+                  --name $(stagingResourceGroup) \
+                  --location $(location) \
+                  --output none
+
+          # Pre-create the managed identity and grant AcrPull BEFORE deploying
+          # the ACA app, so the image pull succeeds on first run.
+          - task: AzureCLI@2
+            displayName: Pre-create staging identity and grant AcrPull
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+
+                az identity create \
+                  --name drupal-staging-aca-identity \
+                  --resource-group $(stagingResourceGroup) \
+                  --location $(location) \
+                  --output none
+
+                STAGING_PRINCIPAL=$(az identity show \
+                  --name drupal-staging-aca-identity \
+                  --resource-group $(stagingResourceGroup) \
+                  --query principalId --output tsv)
+
+                ACR_ID=$(az acr show \
+                  --name $(acrName) \
+                  --resource-group $(resourceGroup) \
+                  --query id --output tsv)
+
+                az role assignment create \
+                  --assignee-object-id "$STAGING_PRINCIPAL" \
+                  --assignee-principal-type ServicePrincipal \
+                  --role 7f951dda-4ed3-4680-a7ca-43fe172d538d \
+                  --scope "$ACR_ID" 2>/dev/null || true
+
+          - task: AzureCLI@2
+            displayName: Deploy staging Bicep
             env:
               MYSQL_ADMIN_PASSWORD: $(mysqlAdminPassword)
               DRUPAL_HASH_SALT: $(drupalHashSalt)
@@ -98,33 +143,28 @@ stages:
               scriptLocation: inlineScript
               inlineScript: |
                 set -euo pipefail
-                az deployment group create \
+
+                MYSQL_HOST=$(az mysql flexible-server list \
                   --resource-group $(resourceGroup) \
+                  --query "[0].fullyQualifiedDomainName" \
+                  --output tsv)
+
+                az deployment group create \
+                  --resource-group $(stagingResourceGroup) \
                   --template-file infra/main.bicep \
-                  --parameters infra/main.parameters.json \
+                  --parameters infra/staging.parameters.json \
                   --parameters \
                     imageTag='$(Build.BuildId)' \
+                    revisionSuffix='$(Build.BuildId)' \
                     mysqlAdminPassword="$MYSQL_ADMIN_PASSWORD" \
                     drupalHashSalt="$DRUPAL_HASH_SALT" \
+                    mysqlHostOverride="$MYSQL_HOST" \
                   --mode Incremental
 
-  # -------------------------------------------------------------------------
-  # Stage 3: Run `drush deploy` exactly once per pipeline run.
-  # Triggers the Container App Job (defined in Bicep), waits for it to finish,
-  # and fails the pipeline if the job fails.
-  #
-  # drush deploy runs: updatedb → cache:rebuild → config:import
-  # -------------------------------------------------------------------------
-  - stage: DrushDeploy
-    displayName: Run drush deploy
-    dependsOn: DeployInfra
-    jobs:
-      - job: RunDrush
-        displayName: Trigger and wait for drush deploy job
-        timeoutInMinutes: 20
-        steps:
           - task: AzureCLI@2
-            displayName: drush deploy
+            displayName: Seed staging database from prod
+            env:
+              MYSQL_ADMIN_PASSWORD: $(mysqlAdminPassword)
             inputs:
               azureSubscription: $(azureServiceConnection)
               scriptType: bash
@@ -132,44 +172,226 @@ stages:
               inlineScript: |
                 set -euo pipefail
 
-                JOB_NAME="drupal-drush-deploy"
+                MYSQL_HOST=$(az mysql flexible-server list \
+                  --resource-group $(resourceGroup) \
+                  --query "[0].fullyQualifiedDomainName" \
+                  --output tsv)
+                MYSQL_SERVER=$(az mysql flexible-server list \
+                  --resource-group $(resourceGroup) \
+                  --query "[0].name" \
+                  --output tsv)
 
-                echo "Starting Container App Job: $JOB_NAME"
+                # Ensure the staging database exists (idempotent).
+                az mysql flexible-server db create \
+                  --resource-group $(resourceGroup) \
+                  --server-name "$MYSQL_SERVER" \
+                  --database-name drupal_staging \
+                  --charset utf8mb4 \
+                  --collation utf8mb4_unicode_ci 2>/dev/null || true
+
+                echo "Seeding drupal_staging from drupal..."
+                mysqldump \
+                  --host="$MYSQL_HOST" \
+                  --user=mysqladmin \
+                  --password="$MYSQL_ADMIN_PASSWORD" \
+                  --ssl-mode=REQUIRED \
+                  --single-transaction \
+                  --no-autocommit \
+                  --opt -Q \
+                  drupal \
+                | mysql \
+                  --host="$MYSQL_HOST" \
+                  --user=mysqladmin \
+                  --password="$MYSQL_ADMIN_PASSWORD" \
+                  --ssl-mode=REQUIRED \
+                  drupal_staging
+                echo "Seed complete."
+
+          - task: AzureCLI@2
+            displayName: Run staging drush deploy
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+
+                JOB_NAME=$(az deployment group show \
+                  --resource-group $(stagingResourceGroup) \
+                  --name main \
+                  --query "properties.outputs.drushJobName.value" \
+                  --output tsv)
+
+                echo "Starting staging drush deploy job: $JOB_NAME"
                 EXECUTION_NAME=$(az containerapp job start \
                   --name "$JOB_NAME" \
-                  --resource-group $(resourceGroup) \
+                  --resource-group $(stagingResourceGroup) \
                   --query name \
                   --output tsv)
 
-                echo "Execution started: $EXECUTION_NAME"
-
-                # Poll until the job reaches a terminal state (max 10 minutes).
-                TIMEOUT=600
-                ELAPSED=0
+                echo "Execution: $EXECUTION_NAME"
+                TIMEOUT=600; ELAPSED=0
                 while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
                   STATUS=$(az containerapp job execution show \
                     --name "$JOB_NAME" \
-                    --resource-group $(resourceGroup) \
+                    --resource-group $(stagingResourceGroup) \
                     --job-execution-name "$EXECUTION_NAME" \
                     --query "properties.status" \
                     --output tsv)
-
-                  echo "[${ELAPSED}s] Status: $STATUS"
-
+                  echo "[${ELAPSED}s] $STATUS"
                   case "$STATUS" in
-                    Succeeded)
-                      echo "drush deploy succeeded."
-                      exit 0
-                      ;;
-                    Failed|Stopped|Degraded)
-                      echo "drush deploy failed with status: $STATUS"
-                      exit 1
-                      ;;
+                    Succeeded) echo "Staging drush deploy succeeded."; exit 0 ;;
+                    Failed|Stopped|Degraded) echo "Staging drush deploy failed: $STATUS"; exit 1 ;;
                   esac
-
-                  sleep 10
-                  ELAPSED=$((ELAPSED + 10))
+                  sleep 10; ELAPSED=$((ELAPSED + 10))
                 done
+                echo "Timed out."; exit 1
 
-                echo "Timed out waiting for drush deploy job after ${TIMEOUT}s."
-                exit 1
+  # -------------------------------------------------------------------------
+  # Stage 3: Deploy to production using blue/green revision switching.
+  #
+  # Requires manual approval via the "drupal-prod" ADO Environment.
+  # Create it at Pipelines → Environments and add an Approvals check.
+  #
+  # Flow:
+  #   1. Deploy new revision with traffic held on old revision
+  #   2. Wait for new revision to become healthy
+  #   3. Run drush deploy (DB migrations) while old is still live
+  #   4. Cut 100% traffic to new revision
+  #   5. Deactivate old revision
+  # -------------------------------------------------------------------------
+  - stage: DeployProd
+    displayName: Deploy production (blue/green)
+    dependsOn: DeployStaging
+    jobs:
+      - deployment: BlueGreen
+        displayName: Blue/green cutover
+        timeoutInMinutes: 40
+        environment: drupal-prod
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: AzureCLI@2
+                  displayName: Deploy new prod revision (traffic held on old)
+                  env:
+                    MYSQL_ADMIN_PASSWORD: $(mysqlAdminPassword)
+                    DRUPAL_HASH_SALT: $(drupalHashSalt)
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+
+                      # Capture the currently-live revision so we can keep
+                      # traffic on it while the new one warms up.
+                      OLD_REVISION=$(az containerapp revision list \
+                        --name drupal \
+                        --resource-group $(resourceGroup) \
+                        --query "[?properties.active && properties.trafficWeight > \`0\`].name | [0]" \
+                        --output tsv 2>/dev/null || echo '')
+                      echo "Current active revision: ${OLD_REVISION:-none}"
+                      echo "##vso[task.setvariable variable=oldRevision]$OLD_REVISION"
+
+                      az deployment group create \
+                        --resource-group $(resourceGroup) \
+                        --template-file infra/main.bicep \
+                        --parameters infra/main.parameters.json \
+                        --parameters \
+                          imageTag='$(Build.BuildId)' \
+                          revisionSuffix='$(Build.BuildId)' \
+                          activeRevisionName="${OLD_REVISION:-}" \
+                          mysqlAdminPassword="$MYSQL_ADMIN_PASSWORD" \
+                          drupalHashSalt="$DRUPAL_HASH_SALT" \
+                        --mode Incremental
+
+                - task: AzureCLI@2
+                  displayName: Wait for new revision to be healthy
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      NEW_REVISION="drupal--$(Build.BuildId)"
+                      echo "Waiting for revision $NEW_REVISION..."
+                      TIMEOUT=300; ELAPSED=0
+                      while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+                        STATE=$(az containerapp revision show \
+                          --name drupal \
+                          --resource-group $(resourceGroup) \
+                          --revision "$NEW_REVISION" \
+                          --query "properties.runningState" \
+                          --output tsv 2>/dev/null || echo 'Unknown')
+                        echo "[${ELAPSED}s] runningState: $STATE"
+                        [ "$STATE" = "Running" ] && { echo "Revision is running."; exit 0; }
+                        [ "$STATE" = "Failed" ] && { echo "Revision failed to start."; exit 1; }
+                        sleep 10; ELAPSED=$((ELAPSED + 10))
+                      done
+                      echo "Timed out waiting for new revision."; exit 1
+
+                - task: AzureCLI@2
+                  displayName: Run drush deploy (old revision still live)
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+
+                      JOB_NAME=$(az deployment group show \
+                        --resource-group $(resourceGroup) \
+                        --name main \
+                        --query "properties.outputs.drushJobName.value" \
+                        --output tsv)
+
+                      echo "Starting prod drush deploy job: $JOB_NAME"
+                      EXECUTION_NAME=$(az containerapp job start \
+                        --name "$JOB_NAME" \
+                        --resource-group $(resourceGroup) \
+                        --query name \
+                        --output tsv)
+
+                      TIMEOUT=600; ELAPSED=0
+                      while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+                        STATUS=$(az containerapp job execution show \
+                          --name "$JOB_NAME" \
+                          --resource-group $(resourceGroup) \
+                          --job-execution-name "$EXECUTION_NAME" \
+                          --query "properties.status" \
+                          --output tsv)
+                        echo "[${ELAPSED}s] $STATUS"
+                        case "$STATUS" in
+                          Succeeded) echo "drush deploy succeeded."; break ;;
+                          Failed|Stopped|Degraded) echo "drush deploy failed: $STATUS"; exit 1 ;;
+                        esac
+                        sleep 10; ELAPSED=$((ELAPSED + 10))
+                      done
+
+                - task: AzureCLI@2
+                  displayName: Cut traffic to new revision
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      NEW_REVISION="drupal--$(Build.BuildId)"
+
+                      az containerapp ingress traffic set \
+                        --name drupal \
+                        --resource-group $(resourceGroup) \
+                        --revision-weight "$NEW_REVISION=100"
+                      echo "Traffic cut to $NEW_REVISION."
+
+                      OLD_REVISION="$(oldRevision)"
+                      if [[ -n "$OLD_REVISION" && "$OLD_REVISION" != "$NEW_REVISION" ]]; then
+                        az containerapp revision deactivate \
+                          --name drupal \
+                          --resource-group $(resourceGroup) \
+                          --revision "$OLD_REVISION"
+                        echo "Deactivated: $OLD_REVISION"
+                      fi
