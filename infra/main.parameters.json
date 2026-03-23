@@ -12,7 +12,7 @@
             "value": "mysqladmin"
         },
         "drupalTrustedHostPatterns": {
-            "value": ""
+            "value": "^drupal\\.wonderfultree-6798a840\\.eastus\\.azurecontainerapps\\.io$"
         },
         "developerIps": {
             "value": ["108.253.241.223"]

@@ -22,6 +22,11 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     supportsHttpsTrafficOnly: true
     minimumTlsVersion: 'TLS1_2'
     allowBlobPublicAccess: false
+    // Required for CIFS/SMB mounts from Azure Container Apps.
+    // ACA mounts Azure Files using the shared account key; if this is false
+    // (Azure policy default in some subscriptions) the mount fails with
+    // error 13 (Permission denied).
+    allowSharedKeyAccess: true
     // Explicitly allow all network access — previously this was Deny with a
     // private endpoint. ARM preserves existing networkAcls if omitted, so we
     // must set Allow explicitly to avoid mount errors after the PE was removed.
