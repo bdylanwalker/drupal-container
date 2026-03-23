@@ -9,3 +9,6 @@ database:
   type: mysql
   version: "8.0"
 composer_version: "2"
+web_environment:
+  - PROD_DB_HOST=${PROD_DB_HOST}
+  - PROD_DB_PASSWORD=${PROD_DB_PASSWORD}

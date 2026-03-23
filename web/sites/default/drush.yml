@@ -15,6 +15,7 @@ drush:
     alias-path:
       - '${env.HOME}/.drush/sites'
       - /etc/drush/sites
+      - /var/www/html/drush/sites
 
 # Global options.
 options:
