@@ -23,7 +23,7 @@ variables:
   - name: resourceGroup
     value: drupal-prod-rg
   - name: location
-    value: eastus
+    value: centralus
   - name: acrName
     value: drupalacr                  # Must be globally unique across Azure
 
