@@ -9,3 +9,8 @@ prod:
         username: mysqladmin
         password: ${env.PROD_DB_PASSWORD}
         port: 3306
+  command:
+    sql:
+      dump:
+        options:
+          extra-dump: '--ssl-mode=REQUIRED'
