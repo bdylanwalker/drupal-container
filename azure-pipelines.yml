@@ -28,6 +28,13 @@ variables:
     value: centralus
   - name: acrName
     value: drupalacr
+  # Set to 'maintenance' when queuing manually for breaking upgrades.
+  # 'blueGreen' (default) holds traffic on the old revision until migrations succeed.
+  # 'maintenance' enables Drupal maintenance mode, cuts traffic immediately, then
+  # runs migrations and disables maintenance mode — use for major version upgrades
+  # or any drush deploy that is not backwards compatible with the running code.
+  - name: deployMode
+    value: blueGreen
 
 stages:
 
@@ -248,24 +255,29 @@ stages:
                 echo "Timed out."; exit 1
 
   # -------------------------------------------------------------------------
-  # Stage 3: Deploy to production using blue/green revision switching.
+  # Stage 3: Deploy to production.
   #
   # Requires manual approval via the "drupal-prod" ADO Environment.
   # Create it at Pipelines → Environments and add an Approvals check.
   #
-  # Flow:
-  #   1. Deploy new revision with traffic held on old revision
-  #   2. Wait for new revision to become healthy
-  #   3. Run drush deploy (DB migrations) while old is still live
-  #   4. Cut 100% traffic to new revision
-  #   5. Deactivate old revision
+  # deployMode=blueGreen (default):
+  #   Traffic held on old revision → new revision warms up → drush deploy
+  #   → cut traffic → deactivate old. Zero downtime for backwards-compatible
+  #   migrations (the common case for patch/minor Drupal releases).
+  #
+  # deployMode=maintenance (set manually when queuing the pipeline run):
+  #   Maintenance mode enabled on live site → new revision deployed and made
+  #   live immediately → drush deploy → maintenance mode disabled. Use for
+  #   major Drupal version upgrades or any breaking schema change.
+  #   The new revision has a cold cache, so it reads maintenance_mode=1 from
+  #   the DB immediately and shows the maintenance page while migrations run.
   # -------------------------------------------------------------------------
   - stage: DeployProd
-    displayName: Deploy production (blue/green)
+    displayName: Deploy production ($(deployMode))
     dependsOn: DeployStaging
     jobs:
-      - deployment: BlueGreen
-        displayName: Blue/green cutover
+      - deployment: Deploy
+        displayName: Deploy to production
         timeoutInMinutes: 40
         environment: drupal-prod
         strategy:
@@ -274,8 +286,55 @@ stages:
               steps:
                 - checkout: self
 
+                # ----------------------------------------------------------
+                # MAINTENANCE MODE ONLY: enable before deploying.
+                # ----------------------------------------------------------
                 - task: AzureCLI@2
-                  displayName: Deploy new prod revision (traffic held on old)
+                  displayName: "[maintenance] Enable maintenance mode"
+                  condition: eq(variables['deployMode'], 'maintenance')
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      JOB_NAME=$(az deployment group show \
+                        --resource-group $(resourceGroup) \
+                        --name main \
+                        --query "properties.outputs.drushJobName.value" \
+                        --output tsv)
+
+                      echo "Enabling Drupal maintenance mode..."
+                      EXECUTION_NAME=$(az containerapp job start \
+                        --name "$JOB_NAME" \
+                        --resource-group $(resourceGroup) \
+                        --args /bin/bash -c \
+                          'drush state:set system.maintenance_mode 1 --input-format=integer' \
+                        --query name --output tsv)
+
+                      TIMEOUT=120; ELAPSED=0
+                      while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+                        STATUS=$(az containerapp job execution show \
+                          --name "$JOB_NAME" \
+                          --resource-group $(resourceGroup) \
+                          --job-execution-name "$EXECUTION_NAME" \
+                          --query "properties.status" --output tsv)
+                        echo "[${ELAPSED}s] $STATUS"
+                        case "$STATUS" in
+                          Succeeded) echo "Maintenance mode enabled."; exit 0 ;;
+                          Failed|Stopped|Degraded) echo "Failed: $STATUS"; exit 1 ;;
+                        esac
+                        sleep 5; ELAPSED=$((ELAPSED + 5))
+                      done
+                      echo "Timed out."; exit 1
+
+                # ----------------------------------------------------------
+                # Deploy Bicep (both modes).
+                # blueGreen: holds traffic on old revision.
+                # maintenance: cuts to new revision immediately.
+                # ----------------------------------------------------------
+                - task: AzureCLI@2
+                  displayName: Deploy new prod revision
                   env:
                     MYSQL_ADMIN_PASSWORD: $(mysqlAdminPassword)
                     DRUPAL_HASH_SALT: $(drupalHashSalt)
@@ -286,15 +345,20 @@ stages:
                     inlineScript: |
                       set -euo pipefail
 
-                      # Capture the currently-live revision so we can keep
-                      # traffic on it while the new one warms up.
-                      OLD_REVISION=$(az containerapp revision list \
-                        --name drupal \
-                        --resource-group $(resourceGroup) \
-                        --query "[?properties.active && properties.trafficWeight > \`0\`].name | [0]" \
-                        --output tsv 2>/dev/null || echo '')
-                      echo "Current active revision: ${OLD_REVISION:-none}"
-                      echo "##vso[task.setvariable variable=oldRevision]$OLD_REVISION"
+                      if [ "$(deployMode)" = "blueGreen" ]; then
+                        OLD_REVISION=$(az containerapp revision list \
+                          --name drupal \
+                          --resource-group $(resourceGroup) \
+                          --query "[?properties.active && properties.trafficWeight > \`0\`].name | [0]" \
+                          --output tsv 2>/dev/null || echo '')
+                        echo "Current active revision: ${OLD_REVISION:-none}"
+                        echo "##vso[task.setvariable variable=oldRevision]$OLD_REVISION"
+                        ACTIVE_REVISION="${OLD_REVISION:-}"
+                      else
+                        echo "Maintenance mode: cutting to new revision immediately."
+                        echo "##vso[task.setvariable variable=oldRevision]"
+                        ACTIVE_REVISION=""
+                      fi
 
                       az deployment group create \
                         --resource-group $(resourceGroup) \
@@ -303,13 +367,17 @@ stages:
                         --parameters \
                           imageTag='$(Build.BuildId)' \
                           revisionSuffix='$(Build.BuildId)' \
-                          activeRevisionName="${OLD_REVISION:-}" \
+                          activeRevisionName="$ACTIVE_REVISION" \
                           mysqlAdminPassword="$MYSQL_ADMIN_PASSWORD" \
                           drupalHashSalt="$DRUPAL_HASH_SALT" \
                         --mode Incremental
 
+                # ----------------------------------------------------------
+                # BLUE/GREEN ONLY: wait for new revision before migrating.
+                # ----------------------------------------------------------
                 - task: AzureCLI@2
-                  displayName: Wait for new revision to be healthy
+                  displayName: "[blueGreen] Wait for new revision to be healthy"
+                  condition: eq(variables['deployMode'], 'blueGreen')
                   inputs:
                     azureSubscription: $(azureServiceConnection)
                     scriptType: bash
@@ -333,8 +401,13 @@ stages:
                       done
                       echo "Timed out waiting for new revision."; exit 1
 
+                # ----------------------------------------------------------
+                # Run drush deploy (both modes).
+                # blueGreen: old revision still live during this step.
+                # maintenance: new revision is live but showing maintenance page.
+                # ----------------------------------------------------------
                 - task: AzureCLI@2
-                  displayName: Run drush deploy (old revision still live)
+                  displayName: Run drush deploy
                   inputs:
                     azureSubscription: $(azureServiceConnection)
                     scriptType: bash
@@ -371,8 +444,14 @@ stages:
                         sleep 10; ELAPSED=$((ELAPSED + 10))
                       done
 
+                # ----------------------------------------------------------
+                # BLUE/GREEN ONLY: cut traffic after migrations succeed.
+                # If this step is reached, migrations were backwards-compatible
+                # and the old revision served users safely throughout.
+                # ----------------------------------------------------------
                 - task: AzureCLI@2
-                  displayName: Cut traffic to new revision
+                  displayName: "[blueGreen] Cut traffic to new revision"
+                  condition: eq(variables['deployMode'], 'blueGreen')
                   inputs:
                     azureSubscription: $(azureServiceConnection)
                     scriptType: bash
@@ -395,3 +474,47 @@ stages:
                           --revision "$OLD_REVISION"
                         echo "Deactivated: $OLD_REVISION"
                       fi
+
+                # ----------------------------------------------------------
+                # MAINTENANCE MODE ONLY: disable after migrations succeed.
+                # Runs even if drush deploy failed so the site is never left
+                # stuck in maintenance mode by a pipeline failure.
+                # ----------------------------------------------------------
+                - task: AzureCLI@2
+                  displayName: "[maintenance] Disable maintenance mode"
+                  condition: and(always(), eq(variables['deployMode'], 'maintenance'))
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      JOB_NAME=$(az deployment group show \
+                        --resource-group $(resourceGroup) \
+                        --name main \
+                        --query "properties.outputs.drushJobName.value" \
+                        --output tsv)
+
+                      echo "Disabling Drupal maintenance mode..."
+                      EXECUTION_NAME=$(az containerapp job start \
+                        --name "$JOB_NAME" \
+                        --resource-group $(resourceGroup) \
+                        --args /bin/bash -c \
+                          'drush state:set system.maintenance_mode 0 --input-format=integer' \
+                        --query name --output tsv)
+
+                      TIMEOUT=120; ELAPSED=0
+                      while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+                        STATUS=$(az containerapp job execution show \
+                          --name "$JOB_NAME" \
+                          --resource-group $(resourceGroup) \
+                          --job-execution-name "$EXECUTION_NAME" \
+                          --query "properties.status" --output tsv)
+                        echo "[${ELAPSED}s] $STATUS"
+                        case "$STATUS" in
+                          Succeeded) echo "Site is live."; exit 0 ;;
+                          Failed|Stopped|Degraded) echo "Failed to disable maintenance mode: $STATUS"; exit 1 ;;
+                        esac
+                        sleep 5; ELAPSED=$((ELAPSED + 5))
+                      done
+                      echo "Timed out."; exit 1
