@@ -402,6 +402,54 @@ stages:
                       echo "Timed out waiting for new revision."; exit 1
 
                 # ----------------------------------------------------------
+                # Snapshot DB and record rollback info (both modes).
+                # Runs before drush deploy so you always have a clean restore
+                # point. Snapshot name: pre-deploy-<BuildId>.
+                # Publishes a rollback-info artifact with the revision to
+                # reactivate and the snapshot name to restore if needed.
+                # ----------------------------------------------------------
+                - task: AzureCLI@2
+                  displayName: Snapshot DB before migrations
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      MYSQL_SERVER=$(az mysql flexible-server list \
+                        --resource-group $(resourceGroup) \
+                        --query "[0].name" --output tsv)
+                      BACKUP_NAME="pre-deploy-$(Build.BuildId)"
+
+                      echo "Creating on-demand backup: $BACKUP_NAME"
+                      az mysql flexible-server backup create \
+                        --resource-group $(resourceGroup) \
+                        --server-name "$MYSQL_SERVER" \
+                        --backup-name "$BACKUP_NAME"
+                      echo "Backup complete: $BACKUP_NAME"
+
+                - task: Bash@3
+                  displayName: Publish rollback info artifact
+                  inputs:
+                    targetType: inline
+                    script: |
+                      mkdir -p $(Agent.TempDirectory)/rollback-info
+                      cat > $(Agent.TempDirectory)/rollback-info/rollback.txt <<EOF
+                      build_id=$(Build.BuildId)
+                      old_revision=$(oldRevision)
+                      db_snapshot=pre-deploy-$(Build.BuildId)
+                      resource_group=$(resourceGroup)
+                      deploy_mode=$(deployMode)
+                      EOF
+                      cat $(Agent.TempDirectory)/rollback-info/rollback.txt
+
+                - task: PublishPipelineArtifact@1
+                  displayName: Upload rollback info
+                  inputs:
+                    targetPath: $(Agent.TempDirectory)/rollback-info
+                    artifact: rollback-info
+
+                # ----------------------------------------------------------
                 # Run drush deploy (both modes).
                 # blueGreen: old revision still live during this step.
                 # maintenance: new revision is live but showing maintenance page.
