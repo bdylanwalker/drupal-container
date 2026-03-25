@@ -424,7 +424,7 @@ stages:
                       echo "Creating on-demand backup: $BACKUP_NAME"
                       az mysql flexible-server backup create \
                         --resource-group $(resourceGroup) \
-                        --server-name "$MYSQL_SERVER" \
+                        --name "$MYSQL_SERVER" \
                         --backup-name "$BACKUP_NAME"
                       echo "Backup complete: $BACKUP_NAME"
 
